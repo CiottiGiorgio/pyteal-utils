@@ -1,33 +1,16 @@
 # Author:  Giorgio Ciotti
 # Date:    11/11/2021
 # email:   gciotti.dev@gmail.com
-from typing import Tuple
 
-from pyteal import Expr, LeafExpr, UnaryExpr, BinaryExpr, TealSimpleBlock
+from pyteal import LeafExpr, UnaryExpr, BinaryExpr
 from pyteal import TealOp, Op
 from pyteal import TealBlock, TealType
-from pyteal import Or, Assert
 from pyteal import Int, BitwiseXor
+from pyteal import If, GetBit, Or
 from pyteal import compileTeal, Mode, CompileOptions
 
 
-class ParametrizedLeafExpr(LeafExpr):
-    def __init__(self, op: Op, *op_args: [Expr], output_type: TealType, expr_inputs: [Expr] = None):
-        super().__init__()
-        self.op = op
-        self.output_type = output_type
-        self.op_args = op_args
-        self.expr_inputs = expr_inputs or list()
-
-    def type_of(self) -> TealType:
-        return self.output_type
-
-    def __str__(self) -> str:
-        return self.op.__str__()
-
-    def __teal__(self, options: CompileOptions) -> Tuple[TealBlock, TealSimpleBlock]:
-        op = TealOp(self, self.op, *self.op_args)
-        return TealBlock.FromOp(options, op, *self.expr_inputs)
+from parametrizedleafexpr import ParametrizedLeafExpr
 
 
 # TODO: Decide what to do with the most negative representable number. It will cause issues for people that are not
@@ -38,7 +21,7 @@ class SInt(LeafExpr):
     def __init__(self, value: int):
         super().__init__()
 
-        if type(value) is not int:
+        if not isinstance(value, int):
             raise TypeError(f"Expected value: int\t\tActual type: {type(value)}.")
         if not (-2**63 <= value <= 2**63-1):
             raise ValueError("Value outside of 64bit signed integer using two's complement.")
@@ -119,9 +102,15 @@ class SInt(LeafExpr):
     def __sub__(self, other):
         return self + other.two_complement()
 
-    # TODO: Right shift must preserve sign. Change the current implementation.
+    # FIXME: Hugely wasteful. Input Expr are replicated throughout the method.
+    #  The solution would be to use branching but I'm not sure how to set up the labels in such a way that
+    #  they don't conflict with other calls to this method and other labels outside of this method.
     def __rshift__(self, other):
-        super().__rshift__(other)
+        return If(GetBit(self, Int(63)) == Int(1),
+                  BinaryExpr(Op.bitwise_or, TealType.uint64, TealType.uint64,
+                             super().__rshift__(other),
+                             Int(2**64-1).__lshift__(Int(64) - other)),
+                  super().__rshift__(other))
 
     def two_complement(self):
         # We don't use normal addition between signed integers because we don't care about overflow in this operation.
@@ -134,4 +123,4 @@ class SInt(LeafExpr):
 
 
 if __name__ == "__main__":
-    print(compileTeal(SInt(2**63-1) + SInt(1), mode=Mode.Signature, version=5))
+    print(compileTeal(SInt(-8).__rshift__(Int(2)), mode=Mode.Signature, version=5))
