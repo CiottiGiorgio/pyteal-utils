@@ -6,7 +6,7 @@ from pyteal import LeafExpr, UnaryExpr, BinaryExpr
 from pyteal import TealOp, Op
 from pyteal import TealBlock, TealType
 from pyteal import Int, BitwiseXor
-from pyteal import If, GetBit, Or
+from pyteal import If, GetBit, Seq
 from pyteal import compileTeal, Mode, CompileOptions
 
 
@@ -102,15 +102,25 @@ class SInt(LeafExpr):
     def __sub__(self, other):
         return self + other.two_complement()
 
-    # FIXME: Hugely wasteful. Input Expr are replicated throughout the method.
-    #  The solution would be to use branching but I'm not sure how to set up the labels in such a way that
-    #  they don't conflict with other calls to this method and other labels outside of this method.
+    # TODO: other appears two times. If it is a complex expression the Expr will be duplicated.
     def __rshift__(self, other):
-        return If(GetBit(self, Int(63)) == Int(1),
-                  BinaryExpr(Op.bitwise_or, TealType.uint64, TealType.uint64,
-                             super().__rshift__(other),
-                             Int(2**64-1).__lshift__(Int(64) - other)),
-                  super().__rshift__(other))
+        # Push operand, get its sign. Cover by 1. Push the parameter for the shift. Right shift. Cover by 1.
+        # Now operand's sign is on top of the stack.
+        _1 = UnaryExpr(Op.dup, TealType.uint64, TealType.uint64, self)
+        _2 = GetBit(_1, Int(63))
+        _3 = ParametrizedLeafExpr(Op.cover, 1, output_type=TealType.uint64, expr_inputs=[_2])
+        _4 = BinaryExpr(Op.shr, TealType.uint64, TealType.uint64, _3, other)
+        _5 = ParametrizedLeafExpr(Op.cover, 1, output_type=TealType.uint64, expr_inputs=[_4])
+
+        # If the sign is positive, push Int(0) and BitwiseOr, if it's negative correct accordingly.
+        # I would have loved to just skip to the end if the operand is positive. Unfortunately if only one branch is
+        #  present is must evaluate to TealType.none. If both are present they must evaluate to the same TealType.
+        _6 = If(_5,
+                Int(2**64-1).__lshift__(Int(64) - other),
+                Int(0))
+        _7 = UnaryExpr(Op.bitwise_or, TealType.uint64, TealType.uint64, _6)
+
+        return _7
 
     def two_complement(self):
         # We don't use normal addition between signed integers because we don't care about overflow in this operation.
@@ -123,4 +133,6 @@ class SInt(LeafExpr):
 
 
 if __name__ == "__main__":
-    print(compileTeal(SInt(-8).__rshift__(Int(2)), mode=Mode.Signature, version=5))
+    print(compileTeal(
+        SInt.__rshift__(SInt(0) - SInt(16), Int(2)),
+        mode=Mode.Signature, version=5))
