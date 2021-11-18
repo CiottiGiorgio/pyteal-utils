@@ -137,7 +137,7 @@ def SInt_twos_complement(operand: Expr) -> Expr:
 
 
 # As of the time of writing this, the code result is bloated with load and store sto prepare the stack even when
-#  the operator is commutative (eg.: Eq). In general half of the generate code is avoidable load/store.
+#  the operator is commutative (eg.: Eq, BitwiseXor). In general half of the generate code is avoidable load/store.
 # TODO: Some comparison use And and Or to get their job done. Short circuit could help with reducing computation budget.
 @Subroutine(TealType.uint64)
 def SInt_Eq(left, right):
@@ -161,9 +161,7 @@ def SInt_Lt(left, right):
            If(sign_left.load() == Int(1),
               Int(1),
               Int(0)),
-           If(sign_left.load() == Int(1),
-              Gt(left, right),
-              Lt(left, right)))
+           Lt(left, right))
     ])
 
 
@@ -179,10 +177,10 @@ def SInt_Gt(left, right):
 
 @Subroutine(TealType.uint64)
 def SInt_Ge(left, right):
-    return Or(SInt_Eq(left, right), SInt_Gt(left, right))
+    return Not(SInt_Lt(left, right))
 
 
 if __name__ == "__main__":
     print(compileTeal(
-        SInt_Lt(SInt(-10), SInt(0)),
+        SInt_Ge(SInt(-14), SInt(-13)),
         mode=Mode.Signature, version=5))
