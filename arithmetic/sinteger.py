@@ -7,8 +7,8 @@ from pyteal import Op
 from pyteal import TealType
 from pyteal import ScratchVar
 from pyteal import Int, BitwiseXor
-from pyteal import Seq, If, Or, And, GetBit
-from pyteal import Eq, Neq
+from pyteal import Seq, If, Or, Not, GetBit
+from pyteal import Eq, Neq, Lt, Gt
 from pyteal import Subroutine
 from pyteal import compileTeal, Mode
 
@@ -136,10 +136,9 @@ def SInt_twos_complement(operand: Expr) -> Expr:
     return popped
 
 
-# FIXME: Subtraction for comparison can't work because overflowed subtractions close the execution.
-#  Either we change the addition to a MaybeValue or we manually check the signs.
-# TODO: If comparison are implemented with subtraction, we could use short circuit logic to avoid paying for ever
-#  branch in certain cases. Implement short circuit And and Or.
+# As of the time of writing this, the code result is bloated with load and store sto prepare the stack even when
+#  the operator is commutative (eg.: Eq). In general half of the generate code is avoidable load/store.
+# TODO: Some comparison use And and Or to get their job done. Short circuit could help with reducing computation budget.
 @Subroutine(TealType.uint64)
 def SInt_Eq(left, right):
     return Eq(left, right)
@@ -152,7 +151,20 @@ def SInt_Neq(left, right):
 
 @Subroutine(TealType.uint64)
 def SInt_Lt(left, right):
-    return SInt_Sub(left, right) >= Int(2**63)
+    sign_left = ScratchVar(TealType.uint64)
+    sign_right = ScratchVar(TealType.uint64)
+
+    return Seq([
+        sign_left.store(GetBit(left, Int(63))),
+        sign_right.store(GetBit(right, Int(63))),
+        If(BitwiseXor(sign_left.load(), sign_right.load()),
+           If(sign_left.load() == Int(1),
+              Int(1),
+              Int(0)),
+           If(sign_left.load() == Int(1),
+              Gt(left, right),
+              Lt(left, right)))
+    ])
 
 
 @Subroutine(TealType.uint64)
@@ -162,12 +174,7 @@ def SInt_Le(left, right):
 
 @Subroutine(TealType.uint64)
 def SInt_Gt(left, right):
-    result = ScratchVar(TealType.uint64)
-
-    return Seq([
-        result.store(SInt_Sub(left, right)),
-        And(result.load() != Int(0), result.load() < Int(2**63))
-    ])
+    return Not(SInt_Le(left, right))
 
 
 @Subroutine(TealType.uint64)
@@ -177,5 +184,5 @@ def SInt_Ge(left, right):
 
 if __name__ == "__main__":
     print(compileTeal(
-        SInt_rshift(SInt(-50), Int(1)),
+        SInt_Lt(SInt(-10), SInt(0)),
         mode=Mode.Signature, version=5))
