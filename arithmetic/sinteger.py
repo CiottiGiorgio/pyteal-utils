@@ -5,8 +5,10 @@
 from pyteal import Expr, UnaryExpr, BinaryExpr
 from pyteal import Op
 from pyteal import TealType
+from pyteal import ScratchVar
 from pyteal import Int, BitwiseXor
-from pyteal import If, GetBit
+from pyteal import Seq, If, Or, And, GetBit
+from pyteal import Eq, Neq
 from pyteal import Subroutine
 from pyteal import compileTeal, Mode
 
@@ -134,7 +136,46 @@ def SInt_twos_complement(operand: Expr) -> Expr:
     return popped
 
 
+# FIXME: Subtraction for comparison can't work because overflowed subtractions close the execution.
+#  Either we change the addition to a MaybeValue or we manually check the signs.
+# TODO: If comparison are implemented with subtraction, we could use short circuit logic to avoid paying for ever
+#  branch in certain cases. Implement short circuit And and Or.
+@Subroutine(TealType.uint64)
+def SInt_Eq(left, right):
+    return Eq(left, right)
+
+
+@Subroutine(TealType.uint64)
+def SInt_Neq(left, right):
+    return Neq(left, right)
+
+
+@Subroutine(TealType.uint64)
+def SInt_Lt(left, right):
+    return SInt_Sub(left, right) >= Int(2**63)
+
+
+@Subroutine(TealType.uint64)
+def SInt_Le(left, right):
+    return Or(SInt_Eq(left, right), SInt_Lt(left, right))
+
+
+@Subroutine(TealType.uint64)
+def SInt_Gt(left, right):
+    result = ScratchVar(TealType.uint64)
+
+    return Seq([
+        result.store(SInt_Sub(left, right)),
+        And(result.load() != Int(0), result.load() < Int(2**63))
+    ])
+
+
+@Subroutine(TealType.uint64)
+def SInt_Ge(left, right):
+    return Or(SInt_Eq(left, right), SInt_Gt(left, right))
+
+
 if __name__ == "__main__":
     print(compileTeal(
-        SInt_Sub(SInt_Add(SInt(0), SInt(12)), SInt(1)),
+        SInt_rshift(SInt(-50), Int(1)),
         mode=Mode.Signature, version=5))
